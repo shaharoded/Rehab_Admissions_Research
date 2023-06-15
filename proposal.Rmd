@@ -1,0 +1,712 @@
+---
+title: "Project proposal"
+author: "Team name: 7, El Puto's"
+output: pdf_document
+editor_options: 
+---
+
+```{r load-packages, message = FALSE,echo = FALSE,warning=FALSE}
+library(knitr)
+library(tidyverse)
+library(broom)
+library(htmltools)
+library(ggplot2)
+library(ggridges)
+```
+
+```{r setup, include = FALSE ,message=FALSE,warning=FALSE}
+opts_chunk$set(echo=FALSE) # hide source code in the document
+```
+
+## 1. Introduction
+
+Research Question: Are there distinct differences between drug addicts
+in the US who are submitted to rehab multiple times compared to drug
+addicts who are submitted to rehab for the first time?
+
+Our objective is to create a profile and identify similarities and
+differences between individuals who have participated in rehabilitation
+programs multiple times and those who are participating for the first
+time. Our research aims to provide a better understanding of these
+groups and match them with more appropriate treatments based on their
+group profile and tendencies.
+
+This analysis could make a significant contribution to the mental health
+and drug addiction field. It can be challenging to match the right
+treatment or facility with different addicts. Our vision is that if we
+can create a distinct profile that affects the treatment given to the
+individual, funds can be used more accurately. This could lead to the
+creation of hospitals that are proficient with first-time patients and
+others that are proficient with returning drug addicts.
+
+This problem is significant because many recovered drug addicts are
+constantly relapsing and are unable to leave the drug cycle. If we can
+help in improving the treatment they receive, we may be able to help
+them recover for good and live a better life.
+
+Creating this profiling is difficult for many reasons, the first being
+the credibility of the data, as many addicts might withhold information
+on their admission to the rehab facility (for personal reasons,
+skepticism in the process and in their anonymity etc.) Moreover, the
+data is not a serial data, meaning we can't use prior admissions to
+rehab for returning addict, a data segment that could have been helpful
+to our cause.
+
+Given that we have the admissions and discharges data from these
+facilities, we wish to create a tree model that can classify our rows
+based on the number of admissions to rehab a patient has, hopefully our
+tree will catch accurately as many groups as possible. Our groups will
+mainly focus on the number of times an addict was admitted to rehab, but
+might also take into consideration the patient's preferable drug type,
+and / or their mental health status upon admission. Than, we wish to
+point out the most significant indicators for each group (class) using
+the SHAP library
+
+
+\pagebreak
+
+
+## 2. Data
+
+Our data set holds records of admissions to rehab facilities over the US
+during the year of 2020. The data has both features from before
+admission to the rehab facility, from the day of admission and of the
+treatment offered to the patient. In our analysis we chose to focus on
+data from before and from the day of admission as personal features that
+might show differences in different groups in our research question.
+Some of the original features were too specific to our purpose, so we
+created 8 calculated features that use the original data and add to it
+more suitable information. All the different features used for our work
+are explained, both in meaning and in calculation method, and de-coded
+in the README file attached as an appendix. The original data set in
+encoded and all variables are numeric-labeled.
+
+
+Quick explanation on the calculated features:
+
+-   CALC_RACE - Categorical field for the RACE feature.
+-   STATE_PARTY - The main party voted for in the patient's state
+    presidential elections.
+-   SUBSTANCE - categorical value, the type of most meaningful substance
+    a patient is consuming (method in README). - ADDICTIVE_LEVEL - The
+    highest addictive level (relative) for a substance consumed by the
+    patient.
+    -   FREQ - The highest frequency of drug consumption by the patient
+        (self reported).
+    -   FRSTUSE_LEGAL , FRSTUSE_ILLEGAL - The age of the first use in
+        legal or illegal drug
+    -   UNDER_INFLUENCE - Were drugs found in the patients body during
+        admission?
+
+After creating the calculated features and focus on the data features
+relevant to us (in the README file) the data has been filtered. The
+purpose of the filter is to ignore rows that might confuse our model.
+Our project focuses on creating a relative ID for different groups (and
+is not necessarily a prediction tool), so incomplete or ambiguous data
+is ignored. We focused on a few issues (index is for identification in
+the code):
+
+1.  (1) Addicts that are addicted to 2 or more illegal drug types
+    (uppers/ downers, over the counter) might compromise our profile,
+    that takes into consideration the substance used. They are currently
+    marked as SUNDAY_FUNDAY in SUBSTANCE column.
+
+2.  (2) Null values (or unknown values) in original features:
+    GENDER,MARSTAT, EDUC, EMPLOY, LIVARAG, PSOURCE, PSYPROB, NOPRIOR
+    were removed.
+
+3.  (3) Null values in calculated features: SUBSTANCE, FREQ, and in both
+    FRSTUSE_LEGAL and FRSTUSE_ILLEGAL were removed.
+
+Our final data set has 23 features (without caseID) and 579254 rows.
+
+```{r ,warning=FALSE}
+# Add original data import
+admission_data <- read.csv("C:/Users/guy/Desktop/final_prop/data/TEDSA_PUF_2020.csv")
+# /
+#
+# Feature engineering as described in the README and coded in the Appendix
+#
+# Filters and Selection to the engineered data
+#
+# Import new file
+#/
+admission_data <- read.csv("C:/Users/guy/Desktop/final_prop/data/admission_data_cooked.csv")
+
+```
+
+\pagebreak
+
+## 3. Preliminary results
+
+Exploratory data analysis, including some summary statistics and
+visualizations, along with some explanation on how they help you learn
+more about the problem. Obviously, you will add/implement more analysis
+as you work on your final project, but for the proposal stage, we want
+to see that project you're proposing is viable (and reasonable) to
+accomplish within the Class's time frame.
+
+On this section, our purpose is to show a basic analysis of our final
+data set created above, as well as to show a few important relationships
+in the data. First let's show statistical information on the final
+features, and a glimpse into their first few values.
+
+```{r}
+# Get an upper view on the data
+dim(admission_data)
+summary(admission_data)
+
+```
+
+We are taking into consideration that our outcome might also include
+separate profiles based on the calculated SUBSTANCE feature and the
+original PSYPROB feature, as the patient's mental health and drug type
+might also have a major influence on his/her profile. In order to
+decide, correlation tests will be conducted between these 3 parameters.
+The goal will be to see if there is a notable correlation between
+SUBSTANCE \<-\> NOPRIOR and PSYPROB \<-\> NOPRIOR. If True, they will be
+used as explanatory variables for our model. if False, they will have to
+be represented in a different class and to be given with their own
+profile.
+
+\pagebreak
+
+
+### First relationship: NOPRIOR \<-\> PSYPROB
+
+As in the README, here is the decoded data labels:
+
+0 - No priors
+
+1 - 1 prior admission
+
+2 - 2 prior admission
+
+3 - 3 prior admission
+
+4 - 4 prior admission
+
+5 - 5 or more prior admission.
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,fig.height=6, fig.width=10}
+# Add original data import
+admission_data <- read.csv("C:/Users/guy/Desktop/final_prop/data/admission_data_cooked.csv")
+admissions <- admission_data[!is.na(admission_data$PSYPROB) & !is.na(admission_data$NOPRIOR),]
+
+ggplot(admissions, aes(x = NOPRIOR, y = PSYPROB, color = factor(NOPRIOR))) +
+  geom_point(stat = "summary", fun.y = "mean", size = 5) +
+  xlab("NOPRIOR - Prior Admissions to Rehab") +
+  ylab("PSYPROB - Psychiatric Assessment") +
+  ggtitle("Psychiatric Assessment by Prior Admissions to Rehab") +
+  scale_color_manual(values = c("#1A237E", "#303F9F", "#3949AB", "#9B59B6", "#BB8FCE", "#D7BDE2", "#E8DAEF")) +
+  annotate("text", x = 4, y = 1.6, label = paste("Correlation = ", round(cor(admissions$NOPRIOR, admissions$PSYPROB), 2)), size = 5, color = "#8B0000")
+
+```
+
+It appears that there is a medium negative correlation between NOPRIOR
+\<-\> PSYPROB so PSYPROB will be treated as an explanatory, X variable.
+
+\pagebreak
+
+### Second relationship: NOPRIOR \<-\> SUBSTANCE 
+
+As in the README, here are the decoded data labels:
+
+0 - legal in country
+
+1 - over the counter prescriptions / other
+
+2 - Stimulant
+
+3 - Depressant
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE,fig.height=6, fig.width=10}
+admissions <- admission_data[!is.na(admission_data$SUBSTANCE) & !is.na(admission_data$NOPRIOR),]
+
+ggplot(admissions, aes(x = NOPRIOR, y = SUBSTANCE, color = factor(NOPRIOR))) +
+  geom_point(stat = "summary", fun.y = "mean", size = 5) +
+  xlab("NOPRIOR - Prior Admissions to Rehab") +
+  ylab("SUBSTANCE - Consumed Substance Class") +
+  ggtitle("Psychiatric Assessment by Consumed Substance Class") +
+  scale_color_manual(values = c("#8B0000", "#AB2F40", "#E2A9A9", "#F0E68C", "#CDBE70", "#BDB76B")) +
+  annotate("text", x = 1, y = 1.75, label = paste("Correlation = ", round(cor(admissions$NOPRIOR, admissions$SUBSTANCE), 2)), size = 5, color = "#1A237E")
+
+```
+
+It appears that there is a medium positive correlation between NOPRIOR
+\<-\> SUBSTANCE so SUBSTANCE will be treated as an explanatory, X
+variable.
+
+next, we'll show how the data disperses in a few of our chosen
+variables, to get a preliminary idea on the biggest most common features
+and their values in the set.
+
+### Categorical Features \<-\> NOPRIOR (Number of Prior Admissions to Rehab)
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE,fig.height=6, fig.width=10}
+ggplot(admission_data, aes(x = NOPRIOR, y = as.factor(STATE_PARTY), fill = as.factor(STATE_PARTY), color = as.factor(STATE_PARTY))) + 
+  geom_density_ridges(alpha = 0.5) + 
+  ggtitle("Density of STATE_PARTY Category for NOPRIOR")
+
+ggplot(admission_data, aes(x = NOPRIOR, y = as.factor(ADDICTIVE_LEVEL), fill = as.factor(ADDICTIVE_LEVEL), color = as.factor(ADDICTIVE_LEVEL))) + 
+  geom_density_ridges(alpha = 0.5) + 
+  ggtitle("Density of ADDICTIVE_LEVEL Category for NOPRIOR")
+
+ggplot(admission_data, aes(x = NOPRIOR, y = as.factor(FREQ), fill = as.factor(FREQ), color = as.factor(FREQ))) + 
+  geom_density_ridges(alpha = 0.5) + 
+  ggtitle("Density of FREQ Category for NOPRIOR")
+
+```
+
+A few quick conclusions (remember, decoding of the Y axis's is in the
+README file): - We see that in democrat states (2) there are much more
+patients in 5th admission (and more), relative to the group size. One
+might think that citizens in republican states (0) "give up" after the
+first rehab. - We clearly see that the more addictive the consumed drug
+is, the greater is the number of admissions to 5th rehab (and more) -
+The frequency of use has a similar effect.
+
+### First Use \<-\> Substance
+
+```{r,echo=FALSE,fig.height=4, fig.width=10,warning=FALSE}
+
+admission_data$GENDER <- as.numeric(admission_data$GENDER)
+admission_data$PREG <- as.numeric(admission_data$PREG)
+admission_data$VET <- as.numeric(admission_data$VET)
+admission_data$ARRESTS <- as.numeric(admission_data$ARRESTS)
+admission_data$SUBSTANCE <- as.character(admission_data$SUBSTANCE)
+
+ggplot(admission_data, aes(y = FRSTUSE_LEGAL,
+                  fill = SUBSTANCE)) +
+  geom_bar(position = "fill") +
+  labs(
+    x = "Proportion",
+    y = "FRSTUSE_LEGAL",
+    fill = "SUBSTANCE",
+    title = "Relation between Substance to first use of legal drug",
+  ) + 
+  ylim(-1,7)
+
+ggplot(admission_data, aes(y = FRSTUSE_ILLEGAL,
+                  fill = SUBSTANCE)) +
+  geom_bar(position = "fill") +
+  labs(
+    x = "Proportion",
+    y = "FRSTUSE_ILLEGAL",
+    fill = "SUBSTANCE",
+    title = "Relation between Substance to first use of illegal drug",
+  ) + 
+  ylim(-1,7)
+
+admission_data$SUBSTANCE <- as.numeric(admission_data$SUBSTANCE)
+
+```
+
+By carefully examining this visualization we can see that the sooner a
+person used a legal substance (age), the severity of the substance used
+on the day of admission to rehab is usually higher, which might indicate
+that the younger a person consume a legal drug for the first time, the
+higher are the chances of this drug to turn into a gate-way drug in the
+future (lead to use of worse drugs)
+
+On the illegal drugs we see a clear and reversed conclusion: The older a
+person is when consuming their first illegal drug, the worse is the drug
+consumed on the day of admission to rehab.
+
+\pagebreak
+
+##### Categories disperse
+
+A quick view on the relative quantities of each sub group out of the
+total:
+
+```{r,echo=FALSE,fig.height=6, fig.width=10,warning=FALSE}
+# Set up a multi - paneled layout
+par(mfrow = c(1,4))
+
+# Create the first pie chart
+gender_table <- table(admission_data$GENDER)
+gender_labels <- c("Male", "Female")
+names(gender_table) <- gender_labels
+pie(gender_table, main = "Gender")
+
+# Create the second pie chart
+preg_table <- table(admission_data$PREG)
+preg_labels <- c("Yes", "No")
+names(preg_table) <- preg_labels
+pie(preg_table, main = "Pregnent at Admission?")
+
+# Create the third pie chart
+vet_table <- table(admission_data$VET)
+vet_labels <- c("Yes", "No")
+names(vet_table) <- vet_labels
+pie(vet_table, main = "Veteran?")
+
+# Create the forth pie chart
+ARRESTS_table <- table(admission_data$ARRESTS)
+ARRESTS_labels <- c("None", "Once","Two or more times")
+names(ARRESTS_table) <- ARRESTS_labels
+pie(ARRESTS_table, main = "Arrests in past 30 days")
+```
+
+
+\pagebreak
+
+
+## 4. Data analysis plan
+
+What's next?
+
+-   Our outcome (response, Y) is the feature NOPRIOR as we wish to
+    define profiles for returning rehab patients.
+
+-   Our predictor(explanatory, X) variables are, at least at the
+    beginning (before proven not useful): AGE, GENDER, CALC_RACE,
+    MARSTAT, EDUC, FRSTUSE_LEGAL, FRSTUSE_ILLEGAL, EMPLOY, PREG, VET,
+    STATE_PARTY, LIVARAG, PRIMINC, ARRESTS, PSOURCE,
+    DSMCRIT,FREQ_ATND_SELF_HELP, UNDER_INFLUENCE, ADDICTIVE_LEVEL,
+    FREQ,PSYPROB, SUBSTANCE. These variables should compose a unique ID
+    for each predicted class.
+
+-   Method: We believe that the best model for our purpose will be a
+    tree classifier model, so that every class in the outcome will have
+    unique branches reaching to it. After defining a good enough tree,
+    we'll use the SHAP library in order to catch the most important
+    feature for each of our target classes. This way we'll be able to
+    get unique ID's for returning addicts in comparison to first timers,
+    based on their most important features.
+
+-   To support our theory we'll need to prove that at least some of the
+    classes we'll choose will have different characteristics (meaningful
+    features in the decision tree). If we end up combining for example
+    2nd and 3rd timers, that's okay, but we do expect to find
+    differences at least between 1st timers in rehab and the rest.
+
+-   Our work is divided to create load distribution, by each group
+    member's availability. - Up until now one student was in charge of
+    the calculated features, while the other 2 were in charge of the
+    README file, method, proposal and learning the data. The exploratory
+    data analysis was conducted by all 3 of us.
+
+-   For the rest of the project we believe that the correlation and
+    finalizing of the research question's target classes will be one
+    student's job, another will be in charge of building the model, and
+    the third will be in charge of analyzing the results. That being
+    said, we'll all be active at least for QA in every step of the way.
+
+Stay tuned for more!
+
+\pagebreak
+
+### Data README
+
+```{r include_data_readme, comment=''}
+cat(readLines('../data/README.md'), sep = '\n')
+```
+
+
+
+## Appendix
+
+##### features engineering
+
+In this Section We'll place our features engineering as described in the
+data section.
+
+```{r}
+# Add original data import
+admission_data <- read.csv("C:/Users/guy/Desktop/final_prop/data/TEDSA_PUF_2020.csv")
+
+# Calculated features:
+
+# First mutation of existing features (described in the README) - 
+admission_data$PREG[admission_data$PREG == -9] <- 2
+admission_data$VET[admission_data$VET == -9] <- 2
+admission_data$ARRESTS[admission_data$ARRESTS == -9] <- 0
+admission_data$RACE[admission_data$RACE == -9] <- 7
+```
+
+```{r}
+
+# Create Party affiliation feature based on patients state
+Republican <- c(1,2,5,18,20,21,22,28,29,30,31,38,40,45,46,47,48,49,54,56)
+Democratic <- c(6,8,9,10,11,15,17,23,25,27,32,33,34,35,36,44,50)
+
+# State party :
+# Republican - 0
+# Unstable / else - 1
+# Democratic - 2
+
+STATE_PARTY <- function(party){
+    # If from a Democratic state
+    if (party %in% Democratic) {
+    return(2)
+    # If If from a Republican state
+  } else if (party %in% Republican) {
+    return(0)
+    # else - non-distinct-party affiliated state
+    # If missing/unknown/not collected/invalid
+  } else {
+    return(1)
+  }
+}
+
+tmp <- admission_data %>% select(STFIPS)
+
+PARTY_v <- apply(tmp, 1, function(tmp) STATE_PARTY(tmp[1]))
+
+# Activate calculated field
+
+admission_data$STATE_PARTY <- PARTY_v
+
+
+# Create new column FREQ containing the maximum value across FREQ1, FREQ2, and FREQ3
+admission_data$FREQ <- apply(admission_data[, c("FREQ1", "FREQ2", "FREQ3")], 1, max, na.rm = TRUE)
+
+# Create new feature UNDER_INFLUENCE on the day of admission
+UNDER_INFLUENCE_v <- apply(admission_data[, c("ALCFLG", "COKEFLG", "MARFLG", "HERFLG", "METHFLG", "OPSYNFLG", "PCPFLG", "HALLFLG", "MTHAMFLG", "AMPHFLG", "STIMFLG", "BENZFLG", "TRNQFLG", "BARBFLG", "SEDHPFLG", "INHFLG", "OTCFLG", "OTHERFLG")], 1, function(admission_data) ifelse(sum(admission_data) > 0, 1, 0))
+admission_data$UNDER_INFLUENCE <- UNDER_INFLUENCE_v
+```
+
+```{r}
+# create a function SUB_ACCESS to assist in creating SUBSTANCE column
+# legal -> TRUE , illegal -> FALSE
+# vector of countries that marijuana is legal
+weed_legal_states <- c(2,4,6,8,9,11,17,23,25,26,30,32,34,36,50,51)
+SUB_ACCESS <- function(drug,state){
+    # If alcohol
+    if (drug == 2) {
+    return(TRUE)
+    # If weed and legal state
+  } else if (drug == 4 & state %in% weed_legal_states) {
+    return(TRUE)
+  } else {
+    return(FALSE)
+  }
+}
+
+# Create a new function to indicate the type of the drug (by scale)
+# legal in country - 0
+# over the counter prescriptions / other - 1
+# Stimulant - 2 
+# Depressant - 3
+# Irrelevant - -9 (if value is 1 (NONE) or -9 (unknown))
+
+SUB_CATEGORY <- function(drug,state){
+    # If Stimulant
+    if (drug %in% c(3, 10, 11, 12)) {
+    return(2)
+    # If Depressant
+  } else if (drug %in% c(5, 6, 7, 13, 14, 15, 16)) {
+    return(3)
+    #if value is 1 (NONE) or -9 (unknown)
+  } else if (drug %in% c(1,-9)) {
+    return(-9)
+    # If legal in state
+  } else if (SUB_ACCESS(drug,state) == TRUE) {
+    return(0)
+  # Over the counter / other
+  } else {
+    return(1)
+  }
+}
+
+SUBSTANCE_CLASS <- function(drug1,drug2,drug3,state){
+    # Return 'SUNDAY_FUNDAY' if there is a combination of active drugs (in README)
+    # else: Return max value for all 3 substances in use
+  c1 = SUB_CATEGORY(drug1,state)
+  c2 = SUB_CATEGORY(drug2,state)
+  c3 = SUB_CATEGORY(drug3,state)
+  
+  c_range <- c(-9, 0, 1, 2, 3)
+  c_vector <- c(c1, c2, c3)
+  c_unique <- unique(c_vector) # keeps only unique values in vector, without values that appears twice
+  c_range_check <- c_unique %in% c_range[3:5] # take all unique values in range [1,3], holds TRUE and False
+  
+  if (sum(c_range_check) >= 2) {
+    return('SUNDAY_FUNDAY')
+  } else {
+    return(max(c_vector))
+  }
+}
+
+tmp <- admission_data %>% select(SUB1,SUB2,SUB3,STFIPS)
+
+SUBSTANCE_v <- apply(tmp, 1, function(tmp) SUBSTANCE_CLASS(tmp[1],tmp[2],tmp[3],tmp[4]))
+# Activate calculated field
+
+admission_data$SUBSTANCE <- SUBSTANCE_v
+
+
+```
+
+```{r}
+# Create vector for first use of legal drug
+legal_drugs_firstuse = c()
+illegal_drugs_firstuse = c()
+
+
+FIRST_USE_LEGAL <- function(age1, drug1, age2, drug2, age3, drug3, state, legal_drugs_firstuse) {
+  if (SUB_CATEGORY(drug1, state) == 0) {
+    legal_drugs_firstuse <- c(legal_drugs_firstuse, age1)
+  }
+  if (SUB_CATEGORY(drug2, state) == 0) {
+    legal_drugs_firstuse <- c(legal_drugs_firstuse, age2)
+  }
+  if (SUB_CATEGORY(drug3, state) == 0) {
+    legal_drugs_firstuse <- c(legal_drugs_firstuse, age3)
+  }
+  if (length(legal_drugs_firstuse) == 0) {
+    return (NA)
+  } else {
+    # Return min value for all 3 substances in use
+    return (min(legal_drugs_firstuse))
+  } 
+}
+
+FIRST_USE_ILLEGAL <- function(age1,drug1,age2,drug2,age3,drug3,state,illegal_drugs_firstuse){
+  if (SUB_CATEGORY(drug1,state) > 0) {
+    illegal_drugs_firstuse <- c(illegal_drugs_firstuse, age1)
+  }
+  if (SUB_CATEGORY(drug2,state) > 0) {
+    illegal_drugs_firstuse <- c(illegal_drugs_firstuse, age2)
+  }
+  if (SUB_CATEGORY(drug3,state) > 0) {
+    illegal_drugs_firstuse <- c(illegal_drugs_firstuse, age3)
+  }
+  if (length(illegal_drugs_firstuse) == 0) {
+    return (NA)
+  } else {
+    # Return min value for all 3 substances in use
+  return (min(illegal_drugs_firstuse))
+  } 
+}
+
+tmp <- admission_data %>% select(FRSTUSE1,SUB1,FRSTUSE2,SUB2,FRSTUSE3,SUB3,STFIPS)
+
+FRSTUSE_LEGAL_v <- apply(tmp, 1, function(tmp) FIRST_USE_LEGAL(tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7],legal_drugs_firstuse))
+FRSTUSE_ILLEGAL_v <- apply(tmp, 1, function(tmp) FIRST_USE_ILLEGAL(tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7],illegal_drugs_firstuse))
+# Activate calculated field
+
+admission_data$FRSTUSE_LEGAL <- FRSTUSE_LEGAL_v
+admission_data$FRSTUSE_ILLEGAL <- FRSTUSE_ILLEGAL_v
+
+```
+
+```{r}
+# Define the severity of addiction potential for each drug category
+# Non addictive / Unknown - 1 
+# Low - 2
+# High - 3
+# Very high - 4
+
+addiction_levels <- c("1" = 1,
+                      "2" = 3,
+                      "3" = 3,
+                      "4" = 2,
+                      "5" = 4,
+                      "6" = 3,
+                      "7" = 4,
+                      "8" = 3,
+                      "9" = 2,
+                      "10" = 3,
+                      "11" = 3,
+                      "12" = 3,
+                      "13" = 3,
+                      "14" = 3,
+                      "15" = 4,
+                      "16" = 3,
+                      "17" = 2,
+                      "18" = 2,
+                      "19" = 1,
+                      "-9" = 1)
+ADDICTION_LEVEL <- function(SUB1, SUB2, SUB3) {
+  a1 = addiction_levels[as.character(SUB1)]
+  a2 = addiction_levels[as.character(SUB2)]
+  a3 = addiction_levels[as.character(SUB3)]
+  max_value <- max(a1, a2, a3)
+  return(max_value)
+}
+
+# Assign addictive level to the most addictive drug the patient funds
+# create a new column for addiction potential
+
+
+
+tmp <- admission_data %>% select(SUB1,SUB2,SUB3)
+
+ADDICTIVE_LEVEL_v <- apply(tmp, 1, function(tmp) ADDICTION_LEVEL(tmp[1],tmp[2],tmp[3]))
+# Activate calculated field
+
+admission_data$ADDICTIVE_LEVEL <- ADDICTIVE_LEVEL_v
+```
+
+```{r}
+CALC_RACE <- function(race){
+    # If Black person
+    if (race %in% c(4)) {
+    return(1)
+    # If White person
+  } else if (race %in% c(5)) {
+    return(2)
+    # Other single race
+  } else if (race %in% c(1,2,3,6,7,8,9)) {
+    return(3)
+    # If missing/unknown/not collected/invalid
+  } else if (race %in% c(-9)) {
+    return(-9)
+  } 
+}
+
+tmp <- admission_data %>% select(RACE)
+
+RACE_v <- apply(tmp, 1, function(tmp) CALC_RACE(tmp[1]))
+# Activate calculated field
+
+admission_data$CALC_RACE <- RACE_v
+
+```
+
+```{r}
+# Take only relevant features for the final data set
+admission_data <- admission_data %>% 
+  select(CASEID, AGE, GENDER, CALC_RACE, MARSTAT, EDUC, FRSTUSE_LEGAL, FRSTUSE_ILLEGAL, EMPLOY, PREG, VET, STATE_PARTY, LIVARAG, PRIMINC, ARRESTS, PSOURCE, DSMCRIT,FREQ_ATND_SELF_HELP, UNDER_INFLUENCE, SUBSTANCE, ADDICTIVE_LEVEL, FREQ, PSYPROB, NOPRIOR) 
+```
+
+```{r}
+# Apply filters to create the final data set
+
+# FILTER (1)
+admission_data <- admission_data[admission_data$SUBSTANCE != "SUNDAY_FUNDAY", ]
+admission_data$SUBSTANCE <- as.integer(admission_data$SUBSTANCE)
+
+#FILTER (2)
+admission_data <- admission_data[admission_data$GENDER != -9 &
+                                   admission_data$MARSTAT != -9 &
+                                   admission_data$EDUC != -9 &
+                                   admission_data$EMPLOY != -9 &
+                                   admission_data$LIVARAG != -9 &
+                                   admission_data$PSOURCE != -9 & admission_data$PSYPROB != -9 & 
+                                   admission_data$NOPRIOR != -9, ]
+
+#FILTER (3)
+admission_data <- admission_data[!(is.na(admission_data$SUBSTANCE) | is.na(admission_data$FREQ) | 
+                                     (is.na(admission_data$FRSTUSE_LEGAL) & is.na(admission_data$FRSTUSE_ILLEGAL))), ]
+
+```
+
+```{r}
+# Write out the data to the repository to save re-calculations in the future
+write.csv(admission_data,"C:/Users/guy/Desktop/final_prop/data/admission_data_cooked.csv",
+          row.names = FALSE) 
+
+
+```
+
+
+
+### Source code
+
+```{r, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```

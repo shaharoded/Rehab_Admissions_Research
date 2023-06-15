@@ -1,0 +1,312 @@
+---
+title: "Final_Project_Code"
+author: "Team name: 7, El Puto's"
+date: "2023-05-28"
+output: html_document
+---
+
+```{r load-packages, message = FALSE,echo = FALSE,warning=FALSE}
+library(knitr)
+library(tidyverse)
+library(broom)
+library(htmltools)
+library(ggplot2)
+library(ggridges)
+
+```
+
+```{r setup, include = FALSE ,message=FALSE,warning=FALSE}
+opts_chunk$set(echo=FALSE) # hide source code in the document
+```
+
+## Get File
+
+Import the modified file created in the proposal section:
+
+```{r ,warning=FALSE}
+# Add original data import
+#-----> Original file from proposal
+# /
+#
+# Feature engineering as described in the README and coded in the Appendix
+#
+# Filters and Selection to the engineered data
+#
+# Import new file
+#/
+admission_data <- read.csv("C:/Users/shaha/OneDrive/שולחן העבודה/Final project - SISA ad_programming/data/admission_data_cooked.csv")
+
+# Get an upper view on the data
+dim(admission_data)
+summary(admission_data)
+```
+
+
+Analysis on the NOPRIOR feature:
+
+```{r ,warning=FALSE}
+# Count the frequencies of each category
+category_counts <- table(admission_data$NOPRIOR)
+
+# Calculate the percentages
+category_percentages <- round(100 * category_counts / sum(category_counts), 2)
+
+# Create the pie chart with percentage labels
+pie(category_counts, labels = paste(names(category_counts), "\n", category_percentages, "%"), main = "Distribution of NOPRIOR")
+```
+
+```{r ,warning=FALSE}
+
+# For model on Original data
+admission_data <- admission_data %>%
+  select(-CASEID)
+
+```
+
+
+### K-Means in R:
+
+Take a random sample from the data while keeping the ratio's of target variable:
+
+```{r}
+# Calculate the proportion of each 'NOPRIOR' value in the entire dataset
+total_count <- nrow(admission_data)
+noprior_counts <- table(admission_data$NOPRIOR) / total_count
+
+# Determine the number of samples needed for the desired 5%
+sample_size <- round(0.05 * total_count)
+
+# Initialize an empty data frame for the final sample
+final_sample <- data.frame()
+
+# Sample from each 'NOPRIOR' value proportionally based on the desired sample size
+for (noprior_value in names(noprior_counts)) {
+  # Filter the dataset for the current 'NOPRIOR' value
+  subset <- admission_data[admission_data$NOPRIOR == noprior_value, ]
+  
+  # Calculate the number of samples to draw for the current 'NOPRIOR' value
+  subset_sample_size <- round(sample_size * noprior_counts[noprior_value])
+  
+  # Perform random sampling on the subset
+  subset_sample <- subset[sample(nrow(subset), size = subset_sample_size, replace = TRUE), ]
+  
+  # Concatenate the sampled subset with the final sample
+  final_sample <- rbind(final_sample, subset_sample)
+}
+
+# If the total sample size is less than the desired sample size, perform additional random sampling
+while (nrow(final_sample) < sample_size) {
+  remaining_samples <- sample_size - nrow(final_sample)
+  remaining_data <- admission_data[!rownames(admission_data) %in% rownames(final_sample), ]
+  additional_sample <- remaining_data[sample(nrow(remaining_data), size = remaining_samples, replace = TRUE), ]
+  final_sample <- rbind(final_sample, additional_sample)
+}
+
+# Take a random sample of the desired size from the final sample
+final_sample <- final_sample[sample(nrow(final_sample), size = sample_size, replace = FALSE), , drop = FALSE]
+
+# The final_sample dataframe now contains the desired 5% sample with the proportional 'NOPRIOR' values.
+```
+
+```{r}
+# Calculate the percentage of values in the 'NOPRIOR' feature
+percentage <- round(prop.table(table(admission_data$NOPRIOR)) * 100, 2)
+
+# Calculate the percentage of values in the 'NOPRIOR' feature
+percentage_sample <- round(prop.table(table(final_sample$NOPRIOR)) * 100, 2)
+
+# Print the percentage values
+print(percentage)
+print(percentage_sample)
+
+```
+
+Tending out of scope values:
+
+```{r}
+data <- final_sample
+
+# Replace -9 values with NA
+data$FRSTUSE_LEGAL[data$FRSTUSE_LEGAL == -9] <- NA
+data$FRSTUSE_ILLEGAL[data$FRSTUSE_ILLEGAL == -9] <- NA
+
+# Calculate the mean of FRSTUSE_LEGAL column
+mean_FRSTUSE_LEGAL <- mean(data$FRSTUSE_LEGAL, na.rm = TRUE)
+
+# Replace NA values in FRSTUSE_LEGAL column with the mean
+data$FRSTUSE_LEGAL <- ifelse(is.na(data$FRSTUSE_LEGAL), mean_FRSTUSE_LEGAL, data$FRSTUSE_LEGAL)
+
+# Calculate the mean of FRSTUSE_ILLEGAL column
+mean_FRSTUSE_ILLEGAL <- mean(data$FRSTUSE_ILLEGAL, na.rm = TRUE)
+
+# Replace NA values in FRSTUSE_ILLEGAL column with the mean
+data$FRSTUSE_ILLEGAL <- ifelse(is.na(data$FRSTUSE_ILLEGAL), mean_FRSTUSE_ILLEGAL, data$FRSTUSE_ILLEGAL)
+```
+
+Scaling the data in range [0,1] to contra different ranges in features
+
+```{r}
+# Assuming your dataset is stored in a variable called 'data'
+# Select all columns except 'NOPRIOR' for scaling
+features_to_scale <- names(data)[!names(data) %in% c("NOPRIOR")]
+
+# Create a copy of the dataset
+scaled_data <- data
+
+# Scale the selected features
+for (feature in features_to_scale) {
+  min_value <- min(data[[feature]])
+  max_value <- max(data[[feature]])
+  
+  # Scale the values to [0,1]
+  scaled_data[[feature]] <- (data[[feature]] - min_value) / (max_value - min_value)
+}
+
+data <- scaled_data
+```
+
+
+```{r}
+kmeans_clustering <- function(num_clusters,target_feature_name,data){
+  
+# Create |num_clusters| centroids for every category in target_feature_name 
+# return value are the centroids coordinates
+
+set.seed(123)  # Set a random seed for reproducibility
+  
+# Create an empty list to store the centroids
+centroids <- list()
+
+# Iterate over each unique value of NOPRIOR
+for (i in sort(unique(data[[target_feature_name]]))) {
+  
+  # Subset the data for the current value of NOPRIOR
+  data_i <- data[data[[target_feature_name]] == i, ]
+  
+  # Extract the features from the sub set data
+  features_i <- data_i[, !colnames(data_i) %in% target_feature_name]   
+  
+  # Perform K-means clustering with three clusters
+  kmeans_result <- kmeans(features_i, centers = num_clusters)
+  
+  # Retrieve the centroids of the clusters
+  centroids_i <- kmeans_result$centers
+  
+  
+  # Store the centroids in the list
+  centroids[[as.character(i)]] <- centroids_i
+  
+  }
+
+return(centroids)
+
+}
+
+kmeans_clustering(3,'NOPRIOR',data)
+```
+
+```{r}
+
+process_centroid_kmeans <- function(feature_name,num_clusters,centroids){
+  
+  # This function analyzes the clusters and extract the needed data on feature_name coordinates
+  # feature name can be picked from the block above
+
+  # Create empty vectors to store the x and y values
+  x_values <- c()
+  y_values <- c()
+  
+  # Iterate over each centroid in the centroids list (from group 0 to group 5)
+  for (i in 1:length(centroids)) {
+    
+    # Get the current centroid
+    group <- centroids[[i]]
+    
+    for (j in 1:num_clusters){
+    
+    # Extract the SUBSTANCE value from the centroid
+    feature_value <- group[j, feature_name]
+    
+  
+    # Append the x-value (NOPRIOR = i-1) and y-value (SUBSTANCE) to the respective vectors
+    x_values <- c(x_values, i-1)
+    y_values <- c(y_values, feature_value)
+    }
+  }
+  # Create a list with multiple values
+  result <- list(x = x_values, y = y_values)
+  
+  # Return the list
+  return(result)
+}
+```
+
+```{r}
+create_plot_graph_kmeans <- function(x_values, y_values, centroids, feature_name_plot) {
+  # Fit a linear regression model
+  lm_model <- lm(y_values ~ x_values)
+  
+  # Get the summary of the linear regression model
+  summary_lm <- summary(lm_model)
+  
+  # Get the slope and intercept of the regression line
+  slope <- coef(lm_model)[2]
+  intercept <- coef(lm_model)[1]
+  
+  # Get the unique x-values
+  unique_x <- unique(x_values)
+  
+  # Generate a sequence of colors using the rainbow function
+  num_colors <- length(unique_x)
+  point_colors <- rainbow(num_colors, s = 0.8, v = 0.7)
+  
+  # Allocate colors to the points based on their x-values
+  colors <- point_colors[match(x_values, unique_x)]
+  
+  # Calculate correlation
+  correlation <- cor(x_values, y_values)
+  
+  # Create a scatter plot with colored points
+  plot(x_values, y_values, pch = 16, col = colors, xlab = "Number of Prior Rehab Admissions", ylab = "Coordinate", main = sprintf('Independent feature %s\nCorrelation Score: %.2f, Slope: %.2f', feature_name_plot, correlation, slope))
+  
+  # Add the regression line to the plot
+  abline(lm_model, col = "red")
+  
+  # Add a legend with "Regression Line" in the top left
+  legend("topleft", legend = "Regression Line", bty = "n", col = "red", lwd = 1)
+}
+
+```
+
+
+```{r}
+
+create_graph_substance_from_scratch <- function(num_clusters,target_feature,x_feature,data){
+  # One function to run them all
+  
+  centroids <-kmeans_clustering(num_clusters,target_feature,data)
+  result <- process_centroid_kmeans(x_feature,num_clusters,centroids)
+  x_values <- result$x
+  y_values <- result$y
+  create_plot_graph_kmeans(x_values,y_values,centroids,x_feature)
+  
+}
+
+create_graph_substance_from_scratch(3,"NOPRIOR","EMPLOY",data)
+
+```
+
+```{r}
+centroids <-kmeans_clustering(3,"NOPRIOR",data)
+centroids
+#create_graph_substance_from_scratch(3,"NOPRIOR","SUBSTANCE",data)
+
+```
+
+For SHAP analysis - export the file to Python and run the second script found in the folder
+
+```{r}
+write.csv(data,"C:/Users/shaha/OneDrive/שולחן העבודה/Final project - SISA ad_programming/data/data_sample.csv",
+          row.names = FALSE)
+```
+
